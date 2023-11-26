@@ -1,0 +1,14 @@
+name: RotatingFeatures
+channels:
+  - defaults
+dependencies:
+  - python=3.8
+  - scikit-image
+  - scikit-learn
+  - seaborn
+  - tensorflow
+  - numpy
+  - scipy
+  - matplotlib
+  - pandas
+  - tqdm
