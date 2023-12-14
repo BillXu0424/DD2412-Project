@@ -1,25 +1,15 @@
-from typing import Tuple
-
 import torch
 import torch.nn as nn
 from einops import rearrange
-from omegaconf import DictConfig
 
 from codebase.model import ConvCoders
 from codebase.utils import rotation_utils, model_utils
 
 
 class RotatingAutoEncoder(nn.Module):
-    def __init__(self, opt: DictConfig) -> None:
+    def __init__(self, opt) -> None:
         """
         Initialize the RotatingAutoEncoder.
-
-        We implement Rotating Features within an auto-encoding architecture. This class contains the entire
-        architecture, including the encoder and decoder, the potential preprocessing model, and the output model.
-        It also implements the forward pass and evaluation of the model.
-
-        Args:
-            opt (DictConfig): Configuration options.
         """
         super().__init__()
 
@@ -40,16 +30,10 @@ class RotatingAutoEncoder(nn.Module):
         nn.init.constant_(self.output_weight, 1)
         nn.init.constant_(self.output_bias, 0)
 
-    def preprocess_input_images(self, input_images: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def preprocess_input_images(self, input_images):
         """
-        Preprocess input images.
-
-        Args:
-            input_images (torch.Tensor): Batch of input images, shape (b, c, h, w).
-
-        Returns:
-            tuple: Tuple containing preprocessed images to process, shape (b, n, c, h, w),
-            and to reconstruct, shape (b, c, h, w), by model.
+        Preprocess input images. Return the images to process (b, n, c, h, w) and
+        images to reconstruct (b, c, h, w)
         """
         if self.opt.input.dino_processed:
             with torch.no_grad():
@@ -67,20 +51,14 @@ class RotatingAutoEncoder(nn.Module):
             images_to_reconstruct = input_images
 
         if torch.min(images_to_process) < 0:
-            raise AssertionError("images_to_process has to be positive valued.")
+            raise AssertionError("Error. No negative value allowed in images_to_process.")
 
         images_to_process = rotation_utils.add_rotation_dimensions(self.opt, images_to_process)
         return images_to_process, images_to_reconstruct
 
-    def encode(self, z: torch.Tensor) -> torch.Tensor:
+    def encode(self, z):
         """
-        Encode the input image.
-
-        Args:
-            z (torch.Tensor): Input rotating features tensor, shape (b, n, c, h, w).
-
-        Returns:
-            torch.Tensor: Encoded rotating features tensor, shape (b, n, c).
+        Encode the input image from (b, n, c, h, w) to (b, n, c).
         """
         for layer in self.encoder.convolutional:
             z = layer(z)
@@ -89,16 +67,10 @@ class RotatingAutoEncoder(nn.Module):
         z = self.encoder.linear(z)
         return z
 
-    def decode(self, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def decode(self, z):
         """
-        Decode the encoded input image.
-
-        Args:
-            z (torch.Tensor): Encoded tensor, shape (b, n, c).
-
-        Returns:
-            tuple: Tuple containing reconstructed tensor with rotation dimensions, shape (b, n, c, h, w),
-             and reconstructed image, shape (b, c, h, w).
+        Decode the encoded input image from (b, n, c) to (b, n, c, h, w) and (b, c, h, w).
+        (with and without rotation dimensions)
         """
         z = self.decoder.linear(z)
 
@@ -119,16 +91,9 @@ class RotatingAutoEncoder(nn.Module):
 
         return rotation_output, reconstruction
 
-    def apply_output_model(self, z: torch.Tensor) -> torch.Tensor:
+    def apply_output_model(self, z):
         """
-        Apply the output model. This model is applied to the magnitude of the reconstructed rotating features
-        tensor and learns an appropriate scaling and shift of the magnitudes to better match the input values.
-
-        Args:
-            z (torch.Tensor): Magnitude of reconstructed tensor with rotation dimensions, shape (b, c, h, w).
-
-        Returns:
-            torch.Tensor: Reconstructed image, shape (b, c, h, w).
+        Apply the output model.
         """
         reconstruction = (torch.einsum("b c h w, c -> b c h w", z, self.output_weight) + self.output_bias)
 
@@ -137,48 +102,27 @@ class RotatingAutoEncoder(nn.Module):
         else:
             return torch.sigmoid(reconstruction)
 
-    def center_crop_reconstruction(self, rotation_output: torch.Tensor, reconstruction: torch.Tensor) -> tuple:
+    def center_crop_reconstruction(self, rotation_output, reconstruction):
         """
-        Center crop the reconstructions as necessary to match the input image size.
-
-        Args:
-            rotation_output (torch.Tensor): Reconstructed tensor with rotation dimensions, shape (b, n, c, h, w).
-            reconstruction (torch.Tensor): Reconstructed image, shape (b, c, h, w).
-
-        Returns:
-            tuple: Tuple containing center-cropped reconstructions.
+        Do center crop to the reconstructions, in order to match the input image size.
         """
         if self.opt.input.dino_processed:
             rotation_output = rotation_output[:, :, :, 1:-1, 1:-1]
             reconstruction = reconstruction[:, :, 1:-1, 1:-1]
         return rotation_output, reconstruction
 
-    def forward(self, input_images: torch.Tensor, labels: dict, evaluate: bool = False) -> tuple:
+    def forward(self, input_images, labels, evaluate):
         """
-        Forward pass through the model, including preprocessing, autoencoding, and evaluation.
-
-        Args:
-            input_images (torch.Tensor): Input images, shape (b, c, h, w).
-            labels (dict): Labels.
-            evaluate (bool): Flag to evaluate or not.
-
-        Returns:
-            tuple: Tuple containing loss and other metrics.
+        Network Forward.
         """
-        # Prepare input.
-        images_to_process, images_to_reconstruct = self.preprocess_input_images(
-            input_images
-        )
+        images_to_process, images_to_reconstruct = self.preprocess_input_images(input_images)
 
-        # Encode & decode.
         z = self.encode(images_to_process)
         rotation_output, reconstruction = self.decode(z)
 
-        # Calculate loss.
         loss = nn.functional.mse_loss(reconstruction, images_to_reconstruct)
 
         if evaluate:
-            # Run evaluation.
             metrics = rotation_utils.run_evaluation(self.opt, rotation_output, labels)
         else:
             metrics = {}
