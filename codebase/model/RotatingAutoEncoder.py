@@ -5,7 +5,7 @@ import torch.nn as nn
 from einops import rearrange
 from omegaconf import DictConfig
 
-from codebase.model import ConvDecoder, ConvEncoder
+from codebase.model import ConvCoders
 from codebase.utils import rotation_utils, model_utils
 
 
@@ -14,29 +14,25 @@ class RotatingAutoEncoder(nn.Module):
         """
         Initialize the RotatingAutoEncoder.
 
-        We implement Rotating Features within an autoencoding architecture. This class contains the entire
+        We implement Rotating Features within an auto-encoding architecture. This class contains the entire
         architecture, including the encoder and decoder, the potential preprocessing model, and the output model.
         It also implements the forward pass and evaluation of the model.
 
         Args:
             opt (DictConfig): Configuration options.
         """
-        super(RotatingAutoEncoder, self).__init__()
+        super().__init__()
 
         self.opt = opt
 
         # Create model.
-        self.encoder = ConvEncoder.ConvEncoder(opt)
-        self.decoder = ConvDecoder.ConvDecoder(
-            opt, self.encoder.channel_per_layer, self.encoder.latent_dim,
-        )
+        self.encoder = ConvCoders.ConvEncoder(opt)
+        self.decoder = ConvCoders.ConvDecoder(opt, self.encoder.channel_per_layer, self.encoder.latent_dim)
 
         if self.opt.input.dino_processed:
             # Load DINO model and BN preprocess model that goes with it.
             self.dino = model_utils.load_dino_model()
-            self.preprocess_model = nn.Sequential(
-                nn.BatchNorm2d(self.opt.input.channel), nn.ReLU(),
-            )
+            self.preprocess_model = nn.Sequential(nn.BatchNorm2d(self.opt.input.channel), nn.ReLU())
 
         # Create output model.
         self.output_weight = nn.Parameter(torch.empty(self.opt.input.channel))
@@ -44,9 +40,7 @@ class RotatingAutoEncoder(nn.Module):
         nn.init.constant_(self.output_weight, 1)
         nn.init.constant_(self.output_bias, 0)
 
-    def preprocess_input_images(
-        self, input_images: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def preprocess_input_images(self, input_images: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Preprocess input images.
 
@@ -75,9 +69,7 @@ class RotatingAutoEncoder(nn.Module):
         if torch.min(images_to_process) < 0:
             raise AssertionError("images_to_process has to be positive valued.")
 
-        images_to_process = rotation_utils.add_rotation_dimensions(
-            self.opt, images_to_process
-        )
+        images_to_process = rotation_utils.add_rotation_dimensions(self.opt, images_to_process)
         return images_to_process, images_to_reconstruct
 
     def encode(self, z: torch.Tensor) -> torch.Tensor:
@@ -121,11 +113,10 @@ class RotatingAutoEncoder(nn.Module):
         for layer in self.decoder.convolutional:
             z = layer(z)
 
-        reconstruction = self.apply_output_model(rotation_utils.get_magnitude(z))
+        reconstruction = self.apply_output_model(torch.linalg.vector_norm(z))
 
-        rotation_output, reconstruction = self.center_crop_reconstruction(
-            z, reconstruction
-        )
+        rotation_output, reconstruction = self.center_crop_reconstruction(z, reconstruction)
+
         return rotation_output, reconstruction
 
     def apply_output_model(self, z: torch.Tensor) -> torch.Tensor:
@@ -139,19 +130,14 @@ class RotatingAutoEncoder(nn.Module):
         Returns:
             torch.Tensor: Reconstructed image, shape (b, c, h, w).
         """
-        reconstruction = (
-            torch.einsum("b c h w, c -> b c h w", z, self.output_weight)
-            + self.output_bias
-        )
+        reconstruction = (torch.einsum("b c h w, c -> b c h w", z, self.output_weight) + self.output_bias)
 
         if self.opt.input.dino_processed:
             return reconstruction
         else:
             return torch.sigmoid(reconstruction)
 
-    def center_crop_reconstruction(
-        self, rotation_output: torch.Tensor, reconstruction: torch.Tensor
-    ) -> tuple:
+    def center_crop_reconstruction(self, rotation_output: torch.Tensor, reconstruction: torch.Tensor) -> tuple:
         """
         Center crop the reconstructions as necessary to match the input image size.
 
@@ -167,9 +153,7 @@ class RotatingAutoEncoder(nn.Module):
             reconstruction = reconstruction[:, :, 1:-1, 1:-1]
         return rotation_output, reconstruction
 
-    def forward(
-        self, input_images: torch.Tensor, labels: dict, evaluate: bool = False
-    ) -> tuple:
+    def forward(self, input_images: torch.Tensor, labels: dict, evaluate: bool = False) -> tuple:
         """
         Forward pass through the model, including preprocessing, autoencoding, and evaluation.
 

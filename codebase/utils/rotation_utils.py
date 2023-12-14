@@ -1,7 +1,6 @@
 from typing import Dict
 
 import torch
-from einops import repeat
 from omegaconf import DictConfig
 
 from codebase.utils import eval_utils
@@ -20,10 +19,10 @@ def add_rotation_dimensions(opt: DictConfig, x: torch.Tensor) -> torch.Tensor:
         torch.Tensor: The tensor with rotation dimensions added, shape (b, n, ...).
     """
 
-    extra_dimensions = repeat(
-        torch.zeros_like(x), "b ... -> b n ...", n=opt.model.rotation_dimensions - 1,
-    )
-    return torch.cat((x[:, None], extra_dimensions), dim=1)
+    n = opt.model.rotation_dimensions
+    zeros = torch.zeros(x.size(0), n - 1, *x.size()[1:]).cuda()
+    x_with_additional_dim = torch.cat((x.unsqueeze(1), zeros), dim=1)
+    return x_with_additional_dim
 
 
 def rescale_magnitude_rotating_features(
@@ -39,7 +38,7 @@ def rescale_magnitude_rotating_features(
     Returns:
         torch.Tensor: The scaled tensor, shape (b, n, ...).
     """
-    return torch.nn.functional.normalize(x, dim=1) * scaling_factor[:, None]
+    return torch.nn.functional.normalize(x, dim=1) * scaling_factor.unsqueeze(dim=1)
 
 
 def run_evaluation(
@@ -86,41 +85,10 @@ def norm_and_mask_rotating_output(
         torch.Tensor: Rotating features tensor mapped onto the unit hypersphere,
         with values with small magnitudes masked out, shape (b, n, c, h, w).
     """
-    magnitude = get_magnitude(rotation_output, dim=1)
-    norm_magnitude = norm_and_mask_magnitude(opt, magnitude)
-    return get_norm_rotating_output(rotation_output, norm_magnitude)
-
-
-def get_magnitude(x: torch.Tensor, dim: int = 1) -> torch.Tensor:
-    """
-    Calculate the magnitude of a tensor along a specified dimension.
-
-    Args:
-        x (torch.Tensor): The input tensor.
-        dim (int, optional): The dimension along which to calculate the magnitude. Default is 1.
-
-    Returns:
-        torch.Tensor: The magnitude tensor.
-    """
-    return torch.linalg.vector_norm(x, dim=dim)
-
-
-def norm_and_mask_magnitude(opt: DictConfig, magnitude: torch.Tensor) -> torch.Tensor:
-    """
-    Map magnitudes onto the unit hypersphere while masking out values below
-    opt.evaluation.magnitude_mask_threshold.
-
-    Args:
-        opt (DictConfig): Configuration options.
-        magnitude (torch.Tensor): The magnitude tensor.
-
-    Returns:
-        torch.Tensor: The normalized and masked magnitude tensor.
-    """
+    magnitude = torch.linalg.vector_norm(rotation_output, dim=1)
     norm_magnitude = torch.ones_like(magnitude)
-    masking_idx = torch.where(magnitude <= opt.evaluation.magnitude_mask_threshold)
-    norm_magnitude[masking_idx] = 0
-    return norm_magnitude
+    norm_magnitude[magnitude <= opt.evaluation.magnitude_mask_threshold] = 0
+    return get_norm_rotating_output(rotation_output, norm_magnitude)
 
 
 def get_norm_rotating_output(
@@ -154,7 +122,7 @@ def get_norm_rotating_output(
 
     # Take sum of features across rotation dimension, weighted by normalized and masked magnitudes.
     weighted_sum_rotating_output = torch.sum(
-        normalized_rotating_output * norm_magnitude[:, None], dim=2
-    ) / (torch.sum(norm_magnitude[:, None], dim=2) + eps)
+        normalized_rotating_output * norm_magnitude.unsqueeze(dim=1), dim=2
+    ) / (torch.sum(norm_magnitude.unsqueeze(dim=1), dim=2) + eps)
 
-    return weighted_sum_rotating_output[:, :, None]
+    return weighted_sum_rotating_output.unsqueeze(dim=2)

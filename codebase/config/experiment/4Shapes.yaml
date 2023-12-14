@@ -16,7 +16,7 @@ model:
   hidden_dim: 32  # Base channel dimension of convolutional layers.
   linear_dim: 64  # Feature dimension of linear layer.
 
-  rotation_dimensions: 7
+  rotation_dimensions: 8
 
 
 training:

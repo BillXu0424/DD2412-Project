@@ -15,7 +15,7 @@ training:
   learning_rate: 1e-3
   learning_rate_schedule: 1  # 0 - constant lr; 1 - linear warm-up.
   warmup_steps: 500
-  weight_decay: 0
+  weight_decay: 0we
   gradient_clip: 0.1  # x > 0 clipping gradient norm to given value; otherwise, no clipping.
 
   print_idx: 5000  # x > 0: print metrics every x steps; otherwise, no printing.
